@@ -1,24 +1,28 @@
 import fs from 'fs';
 import { PDFParse } from 'pdf-parse';
 
-const pdfPath = './data/handbook.pdf';
+const PDF_PATH = './data/handbook.pdf';
+const TEXT_PATH = './data/handbook.txt';
 
 const parsePdf = async () => {
     try {
         // Read the raw binary data from the PDF file
-        const dataBuffer = fs.readFileSync(pdfPath);
+        const dataBuffer = fs.readFileSync(PDF_PATH);
         const parser = new PDFParse({ data: dataBuffer });
         const result = await parser.getText();
         
-        fs.writeFileSync('./data/handbook.txt', result.text);
+        fs.writeFileSync(TEXT_PATH, result.text);
 
         console.log(`Extracted ${result.total} pages`);
         
         // Destroy the parser instance to prevent memory leak
         await parser.destroy();
-    } catch (err) {
-        console.error("Error parsing PDF:", err);
+    } catch (error) {
+        console.error("Error parsing PDF:", error);
     }
 };
 
-parsePdf();
+// Run if this file is executed directly
+if (require.main === module) {
+    parsePdf();
+}

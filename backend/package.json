@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsx server.ts",
     "dev": "tsx watch server.ts",
-    "parse": "tsx services/pdfService.ts"
+    "parse": "tsx services/pdfService.ts",
+    "vector": "tsx services/vectorService.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +21,10 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "dotenv": "^18.0.10",
     "express": "^5.3.0",
+    "ml-distance": "^5.0.0",
+    "natural": "^8.2.6",
     "pdf-parse": "^2.4.5"
   }
 }
