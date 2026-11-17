@@ -1,13 +1,19 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { VectorChunk, OLLAMA_URL, VECTOR_PATH, getHandbookChunks, getCleanHandbookText, getEmbedding } from '../services/vectorService';
+import { VectorChunk, OLLAMA_URL, VECTOR_PATH, getHandbookChunks, getEmbedding } from '../services/vectorService';
 import natural from 'natural';
 import { similarity } from 'ml-distance';
+import { AutoTokenizer, AutoModelForSequenceClassification } from '@huggingface/transformers';
 
 dotenv.config();
 
 const CHAT_MODEL = 'qwen3:1.7b';
+
+interface Message {
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+}
 
 interface OllamaChatResponse {
     message: {
@@ -29,39 +35,34 @@ const stopWords = new Set([ 'who', 'what', 'the', 'a', 'an', 'is', 'are', 'of', 
                             'nu', 'national', 'university', 'become', 'be', 'get', 'make', 
                             'have', 'want', 'need', 'know', 'tell', 'give', 'show', 'please' ]);
 
-// Finds the closest matching words in the handbook vocabulary
-const expandQueryWithFuzzyMatching = (cleanQuery: string) => {
-    // Set = list of unique words from the handbook text
-    const handbookVocabulary = new Set(getCleanHandbookText().toLowerCase().split(/\W+/));
-    const queryWords = cleanQuery.split(' ');
 
-    const fuzzyWords = queryWords.map((word: string) => {
-        if (word.length > 5 && !handbookVocabulary.has(word)) {
-            let closestWord = word;
-            let highestScore = 0;
+let rerankerModel: any = null;
+let rerankerTokenizer: any = null;
 
-            handbookVocabulary.forEach((vocabWord) => {
-                // Calculate the similarity score using Jaro-Winkler distance
-                const score = natural.JaroWinklerDistance(word, vocabWord);
+// Initializes the cross-encoder reranker to deeply score query-chunk pairs
+const initializeReranker = async () => {
+    try {
+        // dtype currently lacks TypeScript support in the library, so the any is used to bypass it
+        // q8 = 8-bit quantization (smaller model, faster inference, minimal accuracy loss)
+        const rerankerOptions: any = { 
+            dtype: 'q8'
+        };
 
-                if (score > highestScore) {
-                    highestScore = score;
-                    closestWord = vocabWord;
-                }
-            });
+        console.log("Loading reranker model...");
 
-            if (highestScore > 0.8) {
-                return closestWord;
-            }
-        }
-        return word;
-    });
-    return fuzzyWords.join(' ');
+        rerankerTokenizer = await AutoTokenizer.from_pretrained('Xenova/bge-reranker-base', rerankerOptions);
+        rerankerModel = await AutoModelForSequenceClassification.from_pretrained('Xenova/bge-reranker-base', rerankerOptions);
+
+        console.log("Reranker ready!");
+    } catch (error) {
+        console.error("Failed to load reranker:", error);
+    }
 };
+initializeReranker();
 
 // Calculates the similarity between the user's query and every pre-generated vector
-const getVectorScores = async (expandedQuery: string) => {
-    const queryEmbedding = await getEmbedding(expandedQuery);
+const getVectorScores = async (cleanQuery: string) => {
+    const queryEmbedding = await getEmbedding(cleanQuery);
 
     // item = each chunk and embedding in the vectorStore
     return vectorStore.map((item, index) => ({ 
@@ -72,10 +73,10 @@ const getVectorScores = async (expandedQuery: string) => {
 };
 
 // Scores keywords from user's query based on how frequent and unique they are against the tf-idf index
-const getTFIDFScores = (expandedQuery: string) => {
+const getTFIDFScores = (cleanQuery: string) => {
     const tfIDFScores: { index: number, score: number }[] = [];
 
-    tfIDF.tfidfs(expandedQuery, (index, measure) => tfIDFScores.push({ index: index, score: measure }));
+    tfIDF.tfidfs(cleanQuery, (index, measure) => tfIDFScores.push({ index: index, score: measure }));
 
     return tfIDFScores.sort((itemA, itemB) => itemB.score - itemA.score);
 };
@@ -98,32 +99,85 @@ const fuseScores = (vectorScores: {index: number, score: number}[], tfIDFScores:
     .sort((itemA, itemB) => itemB.score - itemA.score);
 };
 
-// Retrieves the chunks and their surrounding context
-const expandWindow = (fusedResults: {index: number, score: number}[]) => {
-    // Take the top 3 results
-    const topMatches = fusedResults.slice(0, 3);
+// Scores the top candidates by comparing user query and candidate chunk
+const rerankContext = async (rerankerQuery: string, candidates: {index: number, text: string}[]): Promise<number> => {
+    if (!rerankerModel || !rerankerTokenizer) {
+        return candidates[0].index;
+    }
+
+    try {
+        const texts = candidates.map(candidate => candidate.text);
+        
+        const inputs = await rerankerTokenizer(
+            new Array(texts.length).fill(rerankerQuery), 
+            { text_pair: texts, padding: true, truncation: true }
+        );
+
+        const { logits } = await rerankerModel(inputs);
+        
+        const scores = logits.data;
+        const scored = candidates.map((candidate, index) => ({
+            // Create a new object and copy the original candidate properties (index, text)
+            ...candidate,
+            // Append the new score generated by the reranker model into this new object
+            score: scores[index]
+        }));
+        scored.sort((itemA, itemB) => itemB.score - itemA.score);
+
+        console.log('Highest Score:', scored[0].score.toFixed(4));
+        console.log('Chunk ID:', scored[0].index);
+        console.log('Chunk Text:', scored[0].text.substring(0, 1000) + '...');
+
+        return scored[0].index;
+    } catch (error) {
+        console.error("Reranker failed, falling back to candidates:", error);
+
+        return candidates[0].index;
+    }
+};
+
+// Retrieves the best chunk and their surrounding context
+const expandWindow = (bestChunkIndex: number): string => {
     const contextChunks: string[] = [];
 
-    topMatches.forEach(match => {
-        for (let index = 2; index > 0; index--) {
-            if (match.index - index >= 0) contextChunks.push(chunks[match.index - index]);
-        }
-        contextChunks.push(chunks[match.index]);
+    // Previous chunk
+    if (bestChunkIndex - 1 >= 0) contextChunks.push(chunks[bestChunkIndex - 1]);
 
-        for (let index = 1; index <= 2; index++) {
-            if (match.index + index < chunks.length) contextChunks.push(chunks[match.index + index]);
-        }
-    });
+    contextChunks.push(chunks[bestChunkIndex]);
+
+    // Next chunk
+    if (bestChunkIndex + 1 < chunks.length) contextChunks.push(chunks[bestChunkIndex + 1]);
+
     // ... = flattens the contextChunks array into this new array
     return [...new Set(contextChunks)].join('\n\n---\n\n');
 };
 
+// Resolves pronouns in user queries by adding the previous bot reply to the start of the query 
+const buildRerankerQuery = (latestMessage: string, messages: Message[]): string => {
+    const pronounRegex = /\b(him|her|it|them|they|he|she|his|hers|their)\b/i;
+    
+    if (pronounRegex.test(latestMessage) && messages.length >= 3) {
+        const previousBotReply = messages[messages.length - 2].content;
+        const rerankerQuery = `${previousBotReply} ${latestMessage}`;
+
+        console.log('Pronoun detected! Expanding Reranker Query with user previous query.');
+
+        return rerankerQuery;
+    } else {
+        console.log('Fresh question. Using only current query for Reranker Query.');
+
+        return latestMessage;
+    }
+};
+
 export const handleChat = async (request: Request, respond: Response) => {
-    const { messages } = request.body;
+    // The messages includes the system prompt and the bot greeting before the user query
+    const { messages } = request.body as { messages: Message[] };
 
     if (!messages || messages.length === 0) return respond.status(400).json({ error: "Messages are required" });
 
     const latestMessage = messages[messages.length - 1].content;
+    console.log('User Query:', latestMessage);
 
     try {
         const cleanQuery = latestMessage.toLowerCase()
@@ -132,11 +186,22 @@ export const handleChat = async (request: Request, respond: Response) => {
             .filter((word: string) => word.length > 2 && !stopWords.has(word))
             .join(' ');
 
-        const expandedQuery = expandQueryWithFuzzyMatching(cleanQuery);
-        const vectorScores = await getVectorScores(expandedQuery);
-        const tfIDFScores = getTFIDFScores(expandedQuery);
+        const vectorScores = await getVectorScores(cleanQuery);
+        const tfIDFScores = getTFIDFScores(cleanQuery);
         const fusedResults = fuseScores(vectorScores, tfIDFScores);
-        const context = expandWindow(fusedResults);
+
+        // Get the top 10 candidates
+        const candidateChunks = fusedResults.slice(0, 10).map(result => ({
+            index: result.index,
+            text: chunks[result.index]
+        }));
+
+        const rerankerQuery = buildRerankerQuery(latestMessage, messages);
+        const bestChunkIndex = await rerankContext(rerankerQuery, candidateChunks);
+        const context = expandWindow(bestChunkIndex);
+
+        console.log('Context length:', context.length, 'characters');
+        console.log('\n\n\n\n\n');
 
         const response = await fetch(`${OLLAMA_URL}/api/chat`, {
             method: 'POST',
@@ -147,14 +212,15 @@ export const handleChat = async (request: Request, respond: Response) => {
                 options: { num_predict: 1500, temperature: 0.0 },
                 messages: [
                     { role: 'system', 
-                      content: `You are a student handbook assistant. Answer the user's question using ONLY the context provided below. 
-                                If the answer is not in the context, say "I don't know based on the handbook.
-                                "\n\nCRITICAL RULES:\n1. Do NOT make up your own math examples.
-                                \n2. The National University grading scale is 1.0 to 4.0. Do NOT use percentages like 90 or 95.
-                                \n\nCONTEXT:\n${context}` 
+                      content: `You are a helpful AI assistant for the National University Student Handbook. 
+                                Read the context provided below carefully and answer the user's question based on it.
+                                If the user asks a question, quote the exact text from the context that answers it.
+                                If the answer is truly not in the context, say "I couldn't find that in the handbook."
+                                CONTEXT:${context}` 
                     },
                     // Ollama API expects the user's message to be in one array
-                    ...messages
+                    // Grabs the last two items in the array (previous bot reply and current user query)
+                    ...messages.slice(-2)
                 ]
             })
         });

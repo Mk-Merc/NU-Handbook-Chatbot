@@ -18,7 +18,7 @@ export interface VectorChunk {
     embedding: number[];
 }
 
-// Promise<number[]> = this async function will eventually resolve to an array of numbers
+// Promise<number[]> = wait and then return an array of numbers
 export const getEmbedding = async (text: string): Promise<number[]> => {
     const respond = await fetch(`${OLLAMA_URL}/api/embed`, {
         method: 'POST',
