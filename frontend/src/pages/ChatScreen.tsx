@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Message } from '../services/chatbot';
@@ -24,59 +24,61 @@ export const ChatScreen = ({ messages, isLoading, onSendMessage }: ChatScreenPro
     };
 
     return (
-        <View style={styles.container}>
-            {/* Header */}
-            <View style={styles.header}>
-                <Text style={styles.headerText}>NU Handbook AI</Text>
-            </View>
-
-            {/* Messages */}
-            <ScrollView
-                ref={scrollViewRef}
-                onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
-                style={styles.messagesContainer}
-            >
-                {messages.map((message) => (
-                    <View
-                        key={message.id}
-                        style={[
-                            styles.messageBubble,
-                            message.sender === 'ME' ? styles.myMessage : styles.theirMessage
-                        ]}
-                    >
-                        <Text style={[
-                            styles.messageText,
-                            message.sender === 'ME' ? styles.myMessageText : styles.theirMessageText
-                        ]}>
-                            {message.text}
-                        </Text>
-                    </View>
-                ))}
-
-                {/* Animated Loading Indicator */}
-                {isLoading && (
-                    <View style={[styles.messageBubble, styles.theirMessage, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                        <ActivityIndicator size="small" color="#000000" />
-                        <Text style={[styles.messageText, styles.theirMessageText]}>Searching...</Text>
-                    </View>
-                )}
-            </ScrollView>
-
-            {/* Input Area */}
-            <View style={styles.inputContainer}>
-                <View style={styles.inputWrapper}>
-                    <Input
-                        value={inputText}
-                        onChangeText={setInputText}
-                        placeholder="Ask about the handbook..."
-                        editable={!isLoading}
-                    />
+        <KeyboardAvoidingView style={styles.keyboardContainer} behavior="padding">
+            <View style={styles.container}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <Text style={styles.headerText}>NU Handbook Chatbot</Text>
                 </View>
-                <Button onPress={handleSend} style={styles.sendButton} disabled={isLoading}>
-                    Send
-                </Button>
+
+                {/* Messages */}
+                <ScrollView
+                    ref={scrollViewRef}
+                    onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+                    style={styles.messagesContainer}
+                >
+                    {messages.map((message) => (
+                        <View
+                            key={message.id}
+                            style={[
+                                styles.messageBubble,
+                                message.sender === 'ME' ? styles.myMessage : styles.theirMessage
+                            ]}
+                        >
+                            <Text style={[
+                                styles.messageText,
+                                message.sender === 'ME' ? styles.myMessageText : styles.theirMessageText
+                            ]}>
+                                {message.text}
+                            </Text>
+                        </View>
+                    ))}
+
+                    {/* Animated Loading Indicator */}
+                    {isLoading && (
+                        <View style={[styles.messageBubble, styles.theirMessage, styles.loadingBubble]}>
+                            <ActivityIndicator size="small" color="#000000" />
+                            <Text style={[styles.messageText, styles.theirMessageText]}>Searching...</Text>
+                        </View>
+                    )}
+                </ScrollView>
+
+                {/* Input Area */}
+                <View style={styles.inputContainer}>
+                    <View style={styles.inputWrapper}>
+                        <Input
+                            value={inputText}
+                            onChangeText={setInputText}
+                            placeholder="Ask about the handbook..."
+                            editable={!isLoading}
+                        />
+                    </View>
+                    <Button onPress={handleSend} style={styles.sendButton} disabled={isLoading}>
+                        Send
+                    </Button>
+                </View>
             </View>
-        </View>
+        </KeyboardAvoidingView>
     );
 };
 
@@ -117,6 +119,11 @@ const styles = StyleSheet.create({
         backgroundColor: '#E5E5EA', 
         alignSelf: 'flex-start' 
     },
+    loadingBubble: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
     messageText: { 
         fontSize: 16, 
         fontFamily: 'Manrope' 
@@ -142,5 +149,8 @@ const styles = StyleSheet.create({
     sendButton: { 
         height: 40, 
         paddingHorizontal: 20 
+    },
+    keyboardContainer: {
+        flex: 1
     }
 });

@@ -3,7 +3,7 @@ import { Message, sendMessageToBot } from '../services/chatbot';
 
 export const useChatbot = () => {
     const [messages, setMessages] = useState<Message[]>([
-        { id: '1', text: 'Hello! I am your NU Handbook Assistant. How can I help you today?', sender: 'BOT' }
+        { id: '1', text: 'Hello! I am your NU Handbook Chatbot. How can I help you today?', sender: 'BOT' }
     ]);
     const [isLoading, setIsLoading] = useState(false);
 
