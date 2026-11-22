@@ -154,24 +154,31 @@ const expandWindow = (bestChunkIndex: number): string => {
 
 // Resolves pronouns in user queries by adding the previous bot reply to the start of the query 
 const buildRerankerQuery = (latestMessage: string, messages: Message[]): string => {
+    const cleanMessage = latestMessage
+        // Remove punctuations and symbols
+        .replace(/[^\w\s]/g, '')
+        // Collapse consecutive whitespace into single spaces
+        .split(/\s+/)
+        .join(' ');
+
     const pronounRegex = /\b(him|her|it|them|they|he|she|his|hers|their)\b/i;
     
-    if (pronounRegex.test(latestMessage) && messages.length >= 3) {
+    if (pronounRegex.test(cleanMessage) && messages.length >= 3) {
         const previousBotReply = messages[messages.length - 2].content;
-        const rerankerQuery = `${previousBotReply} ${latestMessage}`;
-
-        console.log('Pronoun detected! Expanding Reranker Query with user previous query.');
+        const rerankerQuery = `${previousBotReply} ${cleanMessage}`
+        
+        console.log('Pronoun detected! Expanding Reranker Query with previous bot reply.');
 
         return rerankerQuery;
     } else {
         console.log('Fresh question. Using only current query for Reranker Query.');
 
-        return latestMessage;
+        return cleanMessage;
     }
 };
 
 export const handleChat = async (request: Request, respond: Response) => {
-    // The messages includes the system prompt and the bot greeting before the user query
+    // The messages includes the bot greeting before the user query
     const { messages } = request.body as { messages: Message[] };
 
     if (!messages || messages.length === 0) return respond.status(400).json({ error: "Messages are required" });
@@ -180,9 +187,13 @@ export const handleChat = async (request: Request, respond: Response) => {
     console.log('User Query:', latestMessage);
 
     try {
-        const cleanQuery = latestMessage.toLowerCase()
+        // Build the reranker query first (expands it with prior context if a pronoun is detected
+        const rerankerQuery = buildRerankerQuery(latestMessage, messages);
+
+        const cleanQuery = rerankerQuery
+            .toLowerCase()
             .replace(/[^\w\s]/g, '')
-            .split(' ')
+            .split(/\s+/)
             .filter((word: string) => word.length > 2 && !stopWords.has(word))
             .join(' ');
 
@@ -195,8 +206,8 @@ export const handleChat = async (request: Request, respond: Response) => {
             index: result.index,
             text: chunks[result.index]
         }));
+        console.log(candidateChunks.map(candidateChunk => candidateChunk.index))
 
-        const rerankerQuery = buildRerankerQuery(latestMessage, messages);
         const bestChunkIndex = await rerankContext(rerankerQuery, candidateChunks);
         const context = expandWindow(bestChunkIndex);
 
