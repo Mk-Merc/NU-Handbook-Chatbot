@@ -149,7 +149,7 @@ Note: For a standalone APK, the Expo frontend development-server tunnel is not r
 * [ml-distance](https://www.npmjs.com/package/ml-distance) - Cosine Similarity Calculation
 * [Ollama](https://docs.ollama.com/quickstart) - Local LLM Hosting
 * [ArloUI](https://arloui.com/) - UI Components
-* [React Native SVG](https://github.com/software-mansion/react-native-svg) - Scalable vector graphics rendering
+* [React Native SVG](https://github.com/software-mansion/react-native-svg) - Scalable Vector Graphics Rendering
 * [React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/) - Animations
 * [Hugging Face Transformers](https://www.npmjs.com/package/@huggingface/transformers) - Cross-Encoder Reranking
 
